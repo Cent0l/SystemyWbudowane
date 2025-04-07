@@ -22,5 +22,4 @@ do wykonania 9 podprogramow i bedziemy sie przelaczac miedzy nimi przyciskami (p
 > 6 bitowy generator liczb pseudolosowych (oparty o konkretna konfiguracje)
 
 
-  Internet of Things - Jakub Budzich
-  FPGA, ASIC - Mateusz Cętkowski 
+
