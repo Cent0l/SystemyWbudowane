@@ -16,22 +16,20 @@
 
 #include <xc.h>
 #include <libpic30.h>
+#include <stdint.h>
 
-int nrprogramu = 0;
+uint16_t nrprogramu = 0;
+uint16_t zmienProgram = 0;
 unsigned char counter = 0;
-int zmienProgram = 0;
-unsigned char seed = 0xAA;
+uint8_t lfsr6_seed = 0x3F;  // początkowa wartość do LFSR (niezerowa)
 
+// --- Funkcja pomocnicza: wykrywanie wyjścia z trybu ---
 void sprawdzWyjscie() {
     if (PORTDbits.RD7 == 0 || PORTDbits.RD13 == 0 || PORTDbits.RD6 == 0)
         zmienProgram = 1;
 }
 
-unsigned char pseudoRandom() {
-    seed = (seed >> 1) ^ (-(seed & 1) & 0xB8);
-    return seed;
-}
-
+// --- Tryby działania ---
 void binaryUp() {
     while (!zmienProgram) {
         LATA = counter;
@@ -52,9 +50,8 @@ void binaryDown() {
 
 void grayUp() {
     unsigned char portValue = 0;
-    unsigned char gray;
     while (!zmienProgram) {
-        gray = (portValue >> 1) ^ portValue;
+        unsigned char gray = (portValue >> 1) ^ portValue;
         LATA = gray;
         __delay32(1000000);
         portValue++;
@@ -64,9 +61,8 @@ void grayUp() {
 
 void grayDown() {
     unsigned char portValue = 255;
-    unsigned char gray;
     while (!zmienProgram) {
-        gray = (portValue >> 1) ^ portValue;
+        unsigned char gray = (portValue >> 1) ^ portValue;
         LATA = gray;
         __delay32(1000000);
         portValue--;
@@ -76,9 +72,8 @@ void grayDown() {
 
 void bcdUp() {
     unsigned char portValue = 0;
-    unsigned char bcd;
     while (!zmienProgram) {
-        bcd = ((portValue / 10) << 4) | (portValue % 10);
+        unsigned char bcd = ((portValue / 10) << 4) | (portValue % 10);
         LATA = bcd;
         __delay32(1000000);
         portValue++;
@@ -89,9 +84,8 @@ void bcdUp() {
 
 void bcdDown() {
     unsigned char portValue = 99;
-    unsigned char bcd;
     while (!zmienProgram) {
-        bcd = ((portValue / 10) << 4) | (portValue % 10);
+        unsigned char bcd = ((portValue / 10) << 4) | (portValue % 10);
         LATA = bcd;
         __delay32(1000000);
         if (portValue == 0) portValue = 99;
@@ -120,26 +114,48 @@ void Snake() {
 
 void Queue() {
     unsigned char portValue = 0;
-    for (int i = 0; i < 8 && !zmienProgram; i++) {
-        int temp = 1;
-        for (int j = i + 1; j < 8 && !zmienProgram; j++) {
-            LATA = portValue + temp;
-            temp <<= 1;
-            __delay32(1000000);
+
+    while (!zmienProgram) {
+        for (uint16_t i = 0; i < 8 && !zmienProgram; i++) {
+            uint16_t temp = 1;
+            for (uint16_t j = i + 1; j < 8 && !zmienProgram; j++) {
+                LATA = portValue | temp;
+                temp <<= 1;
+                __delay32(1000000); // standardowe opóźnienie
+                sprawdzWyjscie();
+            }
+            portValue |= temp;
+
+            // <-- Dodajemy ten moment! Wyświetl pełny zestaw LED
+            LATA = portValue;
+            __delay32(1500000); // chwila pauzy z pełnym zapaleniem
             sprawdzWyjscie();
         }
-        portValue += temp;
+
+        // opcjonalnie resetujemy kolejkę, aby zaczęła od nowa
+        portValue = 0;
     }
 }
 
-void RandomBlink() {
+void Random() {
+    unsigned char x = 0x2A; // startowa wartość (np. 00101010)
+    unsigned char y = 0x15;
+    unsigned char z;
+
     while (!zmienProgram) {
-        LATA = pseudoRandom();
-        __delay32(700000);
+        x ^= (x << 3);
+        x ^= (x >> 5);
+        y += 13;
+        z = (x ^ y) & 0x3F; // ogranicz do 6 bitów (maks. 0b111111 = 63)
+
+        LATA = z; // tylko dolne 6 bitów zapalone
+
+        __delay32(900000);
         sprawdzWyjscie();
     }
 }
 
+// --- Funkcja główna ---
 int main(void) {
     AD1PCFG = 0xFFFF;
     TRISA = 0x0000;
@@ -149,18 +165,19 @@ int main(void) {
         zmienProgram = 0;
 
         switch (nrprogramu) {
-            case 0: binaryUp(); break;
-            case 1: binaryDown(); break;
-            case 2: grayUp(); break;
-            case 3: grayDown(); break;
-            case 4: bcdUp(); break;
-            case 5: bcdDown(); break;
-            case 6: Snake(); break;
-            case 7: Queue(); break;
-            case 8: RandomBlink(); break;
+            case 0: binaryUp();     break;
+            case 1: binaryDown();   break;
+            case 2: grayUp();       break;
+            case 3: grayDown();     break;
+            case 4: bcdUp();        break;
+            case 5: bcdDown();      break;
+            case 6: Snake();        break;
+            case 7: Queue();        break;
+            case 8: Random();       break;
             default: nrprogramu = 0; break;
         }
 
+        // Obsługa przycisków
         if (PORTDbits.RD7 == 0) {
             counter = 0;
         }
