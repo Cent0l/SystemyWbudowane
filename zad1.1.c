@@ -35,32 +35,31 @@ volatile uint8_t currentProgram = BINARY_UP;
 volatile uint8_t zmienProgram = 0;
 volatile uint8_t counter = 0;
 
-// --- Funkcje pomocnicze ---
+// --- Funkcja pomocnicza ---
 unsigned char binaryToGray(unsigned char binary) {
     return binary ^ (binary >> 1);
 }
 
-void sprawdzWyjscie() {
-    if (zmienProgram) {
-        return;
-    }
-}
-
-// --- Przerwanie zmiany stanu przycisków (RD6 i RD13) ---
+// --- Przerwanie zmiany stanu przycisków ---
 void __attribute__((interrupt, auto_psv)) _CNInterrupt(void) {
     __delay_ms(20); // debounce
-    if (!PORTDbits.RD6) { // RD6 - zmiana w przód
+
+    if (!PORTDbits.RD6) { // RD6 - zmiana programu w przód
         currentProgram++;
         if (currentProgram > RANDOM) currentProgram = BINARY_UP;
         zmienProgram = 1;
     }
-    if (!PORTDbits.RD13) { // RD13 - zmiana w tył
-        if (currentProgram == BINARY_UP) 
+    if (!PORTDbits.RD13) { // RD13 - zmiana programu w tył
+        if (currentProgram == BINARY_UP)
             currentProgram = RANDOM;
-        else 
+        else
             currentProgram--;
         zmienProgram = 1;
     }
+    if (!PORTDbits.RD7) { // RD7 - reset aktualnego programu
+        zmienProgram = 1;
+    }
+
     IFS1bits.CNIF = 0; // wyczyść flagę przerwania
 }
 
@@ -69,7 +68,7 @@ void binaryUp() {
     counter = 0;
     while (!zmienProgram) {
         LATA = counter++;
-        __delay32(1000000);
+        __delay_ms(250); // wcześniej ~1000000 cykli
     }
 }
 
@@ -77,7 +76,7 @@ void binaryDown() {
     counter = 255;
     while (!zmienProgram) {
         LATA = counter--;
-        __delay32(1000000);
+        __delay_ms(250);
     }
 }
 
@@ -85,7 +84,7 @@ void grayUp() {
     counter = 0;
     while (!zmienProgram) {
         LATA = binaryToGray(counter++);
-        __delay32(1000000);
+        __delay_ms(250);
     }
 }
 
@@ -93,7 +92,7 @@ void grayDown() {
     counter = 255;
     while (!zmienProgram) {
         LATA = binaryToGray(counter--);
-        __delay32(1000000);
+        __delay_ms(250);
     }
 }
 
@@ -102,7 +101,7 @@ void bcdUp() {
     while (!zmienProgram) {
         uint8_t bcd = ((portValue / 10) << 4) | (portValue % 10);
         LATA = bcd;
-        __delay32(1000000);
+        __delay_ms(250);
         portValue++;
         if (portValue > 99) portValue = 0;
     }
@@ -113,7 +112,7 @@ void bcdDown() {
     while (!zmienProgram) {
         uint8_t bcd = ((portValue / 10) << 4) | (portValue % 10);
         LATA = bcd;
-        __delay32(1000000);
+        __delay_ms(250);
         if (portValue == 0) portValue = 99;
         else portValue--;
     }
@@ -125,40 +124,34 @@ void Snake() {
         while (snake != 0b11100000 && !zmienProgram) {
             LATA = snake;
             snake <<= 1;
-            __delay32(500000);
+            __delay_ms(125); // wcześniej ~500000
         }
         while (snake != 0b00000111 && !zmienProgram) {
             LATA = snake;
             snake >>= 1;
-            __delay32(500000);
+            __delay_ms(125);
         }
     }
 }
 
 void Queue() {
     unsigned char portValue = 0;
-
     while (!zmienProgram) {
         for (uint16_t i = 0; i < 8 && !zmienProgram; i++) {
             uint16_t temp = 1;
             for (uint16_t j = i + 1; j < 8 && !zmienProgram; j++) {
                 LATA = portValue | temp;
                 temp <<= 1;
-                __delay32(1000000); // standardowe opóźnienie
-                sprawdzWyjscie();
+                __delay_ms(250);
             }
             portValue |= temp;
 
-            // Pełne zapalenie
             LATA = portValue;
-            __delay32(1500000);
-            sprawdzWyjscie();
+            __delay_ms(375); // pełne zapalenie - większa pauza
         }
-
-        portValue = 0; // reset kolejki
+        portValue = 0;
     }
 }
-
 
 void Random() {
     unsigned char x = 0x2A;
@@ -170,7 +163,7 @@ void Random() {
         y += 13;
         z = (x ^ y) & 0x3F;
         LATA = z;
-        __delay32(900000);
+        __delay_ms(225);
     }
 }
 
@@ -180,9 +173,10 @@ int main(void) {
     TRISA = 0x0000;
     TRISD = 0xFFFF;
 
-    // konfiguracja przerwań
+    // Konfiguracja przerwań
     CNEN1bits.CN15IE = 1;  // RD6
     CNEN2bits.CN19IE = 1;  // RD13
+    CNEN2bits.CN16IE = 1;  // RD7
     IEC1bits.CNIE = 1;     // Włącz przerwania CN
     IFS1bits.CNIF = 0;     // Wyczyszczenie flagi
     IPC4bits.CNIP = 5;     // Priorytet przerwań CN
