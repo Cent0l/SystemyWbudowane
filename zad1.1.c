@@ -154,18 +154,15 @@ void Queue() {
 }
 
 void Random() {
-    unsigned char x = 0x2A;
-    unsigned char y = 0x15;
-    unsigned char z;
+    uint8_t lcg = 0x2A; // Startowa wartość (np. 42)
     while (!zmienProgram) {
-        x ^= (x << 3);
-        x ^= (x >> 5);
-        y += 13;
-        z = (x ^ y) & 0x3F;
-        LATA = z;
-        __delay_ms(225);
+        lcg = (lcg * 17 + 43) % 64; // przykładowe dobre parametry
+        LATA = lcg; // wysyłamy na LEDy (tylko 6 bitów)
+        __delay_ms(250);
     }
 }
+
+
 
 // --- Funkcja main ---
 int main(void) {
