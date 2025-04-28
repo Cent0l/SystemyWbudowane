@@ -15,114 +15,122 @@
 #pragma config JTAGEN = OFF
 
 #include <xc.h>
+#define FCY 4000000UL
 #include <libpic30.h>
 #include <stdint.h>
 
-// --- Zmienne globalne ---
-uint16_t nrprogramu = 0;
-uint16_t zmienProgram = 0;
-unsigned char counter = 0;
+// --- Definicje programów ---
+#define BINARY_UP    0
+#define BINARY_DOWN  1
+#define GRAY_UP      2
+#define GRAY_DOWN    3
+#define BCD_UP       4
+#define BCD_DOWN     5
+#define SNAKE        6
+#define QUEUE        7
+#define RANDOM       8
 
-// --- Funkcja pomocnicza: sprawdzanie przycisków ---
+// --- Zmienne globalne ---
+volatile uint8_t currentProgram = BINARY_UP;
+volatile uint8_t zmienProgram = 0;
+volatile uint8_t counter = 0;
+
+// --- Funkcje pomocnicze ---
+unsigned char binaryToGray(unsigned char binary) {
+    return binary ^ (binary >> 1);
+}
+
 void sprawdzWyjscie() {
-    if (PORTDbits.RD7 == 0) {
-        counter = 0;      // Reset licznika
-        zmienProgram = 1; // Ustaw wyjście z funkcji
-    }
-    if (PORTDbits.RD13 == 0) {
-        nrprogramu++;
-        if (nrprogramu > 8) nrprogramu = 0;
-        counter = 0;
-        zmienProgram = 1;
-    }
-    if (PORTDbits.RD6 == 0) {
-        if (nrprogramu == 0)
-            nrprogramu = 8;
-        else
-            nrprogramu--;
-        counter = 0;
-        zmienProgram = 1;
+    if (zmienProgram) {
+        return;
     }
 }
 
-// --- Programy działania LED ---
+// --- Przerwanie zmiany stanu przycisków (RD6 i RD13) ---
+void __attribute__((interrupt, auto_psv)) _CNInterrupt(void) {
+    __delay_ms(20); // debounce
+    if (!PORTDbits.RD6) { // RD6 - zmiana w przód
+        currentProgram++;
+        if (currentProgram > RANDOM) currentProgram = BINARY_UP;
+        zmienProgram = 1;
+    }
+    if (!PORTDbits.RD13) { // RD13 - zmiana w tył
+        if (currentProgram == BINARY_UP) 
+            currentProgram = RANDOM;
+        else 
+            currentProgram--;
+        zmienProgram = 1;
+    }
+    IFS1bits.CNIF = 0; // wyczyść flagę przerwania
+}
 
+// --- Programy LED ---
 void binaryUp() {
+    counter = 0;
     while (!zmienProgram) {
         LATA = counter++;
         __delay32(1000000);
-        sprawdzWyjscie();
     }
 }
 
 void binaryDown() {
+    counter = 255;
     while (!zmienProgram) {
         LATA = counter--;
         __delay32(1000000);
-        sprawdzWyjscie();
     }
 }
 
 void grayUp() {
-    unsigned char portValue = 0;
+    counter = 0;
     while (!zmienProgram) {
-        unsigned char gray = (portValue >> 1) ^ portValue;
-        LATA = gray;
+        LATA = binaryToGray(counter++);
         __delay32(1000000);
-        portValue++;
-        sprawdzWyjscie();
     }
 }
 
 void grayDown() {
-    unsigned char portValue = 255;
+    counter = 255;
     while (!zmienProgram) {
-        unsigned char gray = (portValue >> 1) ^ portValue;
-        LATA = gray;
+        LATA = binaryToGray(counter--);
         __delay32(1000000);
-        portValue--;
-        sprawdzWyjscie();
     }
 }
 
 void bcdUp() {
-    unsigned char portValue = 0;
+    uint8_t portValue = 0;
     while (!zmienProgram) {
-        unsigned char bcd = ((portValue / 10) << 4) | (portValue % 10);
+        uint8_t bcd = ((portValue / 10) << 4) | (portValue % 10);
         LATA = bcd;
         __delay32(1000000);
         portValue++;
         if (portValue > 99) portValue = 0;
-        sprawdzWyjscie();
     }
 }
 
 void bcdDown() {
-    unsigned char portValue = 99;
+    uint8_t portValue = 99;
     while (!zmienProgram) {
-        unsigned char bcd = ((portValue / 10) << 4) | (portValue % 10);
+        uint8_t bcd = ((portValue / 10) << 4) | (portValue % 10);
         LATA = bcd;
         __delay32(1000000);
         if (portValue == 0) portValue = 99;
         else portValue--;
-        sprawdzWyjscie();
     }
 }
 
 void Snake() {
-    unsigned char snake = 0b00000111;
+    uint8_t snake = 0b00000111;
     while (!zmienProgram) {
         while (snake != 0b11100000 && !zmienProgram) {
             LATA = snake;
             snake <<= 1;
             __delay32(500000);
-            sprawdzWyjscie();
         }
         while (snake != 0b00000111 && !zmienProgram) {
             LATA = snake;
             snake >>= 1;
             __delay32(500000);
-            sprawdzWyjscie();
         }
     }
 }
@@ -141,7 +149,7 @@ void Queue() {
             }
             portValue |= temp;
 
-            // Po pełnym zapaleniu - pauza
+            // Pełne zapalenie
             LATA = portValue;
             __delay32(1500000);
             sprawdzWyjscie();
@@ -151,45 +159,49 @@ void Queue() {
     }
 }
 
+
 void Random() {
     unsigned char x = 0x2A;
     unsigned char y = 0x15;
     unsigned char z;
-
     while (!zmienProgram) {
         x ^= (x << 3);
         x ^= (x >> 5);
         y += 13;
-        z = (x ^ y) & 0x3F; // tylko 6 bitów
+        z = (x ^ y) & 0x3F;
         LATA = z;
         __delay32(900000);
-        sprawdzWyjscie();
     }
 }
 
 // --- Funkcja main ---
 int main(void) {
-    AD1PCFG = 0xFFFF; // ustawienie wszystkich pinów na cyfrowe
-    TRISA = 0x0000;   // port A jako wyjście (diody)
-    TRISD = 0xFFFF;   // port D jako wejście (przyciski)
+    AD1PCFG = 0xFFFF;
+    TRISA = 0x0000;
+    TRISD = 0xFFFF;
+
+    // konfiguracja przerwań
+    CNEN1bits.CN15IE = 1;  // RD6
+    CNEN2bits.CN19IE = 1;  // RD13
+    IEC1bits.CNIE = 1;     // Włącz przerwania CN
+    IFS1bits.CNIF = 0;     // Wyczyszczenie flagi
+    IPC4bits.CNIP = 5;     // Priorytet przerwań CN
 
     while (1) {
         zmienProgram = 0;
 
-        switch (nrprogramu) {
-            case 0: binaryUp();    break;
-            case 1: binaryDown();  break;
-            case 2: grayUp();      break;
-            case 3: grayDown();    break;
-            case 4: bcdUp();       break;
-            case 5: bcdDown();     break;
-            case 6: Snake();       break;
-            case 7: Queue();       break;
-            case 8: Random();      break;
-            default: nrprogramu = 0; break;
+        switch (currentProgram) {
+            case BINARY_UP:   binaryUp();    break;
+            case BINARY_DOWN: binaryDown();  break;
+            case GRAY_UP:     grayUp();      break;
+            case GRAY_DOWN:   grayDown();    break;
+            case BCD_UP:      bcdUp();       break;
+            case BCD_DOWN:    bcdDown();     break;
+            case SNAKE:       Snake();       break;
+            case QUEUE:       Queue();       break;
+            case RANDOM:      Random();      break;
+            default:          currentProgram = BINARY_UP; break;
         }
-
-        // 🛑 WAŻNE: Nie sprawdzamy tu przycisków! wszystko w sprawdzWyjscie()
     }
 
     return 0;
